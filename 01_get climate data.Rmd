@@ -1,0 +1,241 @@
+---
+title: "Get climate data for Pantanal"
+author: "Paloma Cárcamo"
+date: "2025-06-02"
+output: html_document
+---
+
+## Before running code for the first time:
+
+* Create account with ECMWF: https://www.ecmwf.int/
+* Then activate account at Climate Data Store: https://cds.climate.copernicus.eu/
+
+## Set API user and Key
+
+* In the Climate Data Store, click on your name on the top right, then select "Your Profile"
+* Your API user is the email you used to log into the Climate Data Store. Complete it in the chunk below.
+* Scroll down your profile to see your API Key (API Token). Copy the entire sequence and paste it in the chunk below.
+  * You should not make your API key public. If sharing this code with others, make sure you have removed your API user and key from the chunk below.
+
+```{r}
+# copy user and API key from profile in CDS, paste in the two lines below
+API_User <- "something@somethingmail.xxx"
+API_Key <- "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+
+
+## Load necessary packages
+
+* including `setup` in the header of the chunk ensures this chunk is always run before other chunks
+* `pacman::p_load()` works similarly to `install.packages() + library()`, but ensures packages are only installed if necessary
+* `tidyverse` (includes `dplyr`, `lubridate`, etc) for tidy data wrangling
+* `sf` for spatial objects
+* `terra` for raster objects
+* `krigR` to download ERA5 data (note this is not available on CRAN so will need to install using devtools - see https://github.com/ErikKusch/KrigR)
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+
+if (!require("pacman")) install.packages("pacman")
+if(!require("devtools")) install.packages("devtools")
+if(!require("KrigR")) devtools::install_github("https://github.com/ErikKusch/KrigR")
+
+pacman::p_load(tidyverse, sf, KrigR, terra, slider)
+```
+
+## Load raw data
+
+```{r}
+# make sure you are in the correct working directory and that the raw data file is in a folder called "data"
+data_raw <- readxl::read_xlsx("data/raw/south_2025_expanded_15May2025.xlsx")
+```
+
+## Check distances and dates in dataset
+
+```{r}
+# check dates
+dates <- data_raw |> 
+  dplyr::filter(!is.na(date)) |> 
+  dplyr::mutate(date = if_else(str_length(date) == 8, 
+                               as.Date(date, format = "%d_%m_%y"), 
+                               as.Date(date, format = "%d_%m_%Y"))) |>
+  dplyr::distinct(date)
+
+# get minimum date (min date from dataset minus 30 days)
+min_date <- min(dates$date) - 30
+max_date <- max(dates$date)
+
+date_key = data.frame(date = seq.Date(min_date, max_date, 1),
+                      day = c(1:length(seq.Date(min_date, max_date, 1))))
+```
+
+## Get data from ERA5
+
+* `2m_temperature` = Temperature of air at 2m above the surface of land, sea or in-land waters. 2m temperature is calculated by interpolating between the lowest model level and the Earth's surface, taking account of the atmospheric conditions. Temperature measured in kelvin can be converted to degrees Celsius (°C) by subtracting 273.15.
+* `2m_dewpoint_temperature` = Temperature to which the air, at 2 metres above the surface of the Earth, would have to be cooled for saturation to occur. It (external to C3S) is a measure of the humidity of the air. Combined with temperature and pressure, it can be used to calculate the relative humidity. 2m dew point temperature is calculated by interpolating between the lowest model level and the Earth's surface, taking account of the atmospheric conditions. Temperature measured in kelvin can be converted to degrees Celsius (°C) by subtracting 273.15.
+
+Note that (temps in formula in °C)
+
+$$Relative\ humidity =  100\times\frac{e^{(17.625 \times dew\ point\ temp)/(243.04 + dew\ point\ temp)}}{e^{(17.625 \times temp)/(243.04 + temp)}}$$
+
+See:
+
+* Alduchov, O. A., and R. E. Eskridge, 1996: Improved Magnus' form approximation of saturation vapor pressure. J. Appl. Meteor., 35, 601–609.
+* August, E. F., 1828: Ueber die Berechnung der Expansivkraft des Wasserdunstes. Ann. Phys. Chem., 13, 122–137.
+* Magnus, G., 1844: Versuche über die Spannkräfte des Wasserdampfs. Ann. Phys. Chem., 61, 225–247.
+
+```{r}
+# get extent to download data
+# note that it needs to be in WGS84 (EPSG: 4326)
+locs_ids <- data_raw |> 
+  dplyr::filter(!is.na(latitude) & !is.na(longitude)) |> 
+  dplyr::group_by(latitude, longitude) |> 
+  dplyr::mutate(ID = cur_group_id()) |> 
+  dplyr::ungroup()
+
+locs <- locs_ids |> 
+  dplyr::distinct(ID, latitude, longitude) |> 
+  sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+
+spat_extent <- ext(locs)
+
+spat_extent_buffered <- ext(xmin(spat_extent) - 0.05,
+                            xmax(spat_extent) + 0.05,
+                            ymin(spat_extent) - 0.05,
+                            ymax(spat_extent) + 0.05)
+```
+
+```{r}
+# download temperature
+
+# If you want to rerun this code to download data for different dates or areas, you will need to change the filename below
+era5_temp <- CDownloadS(
+  
+  ## Variable and Data Product
+  Variable = "2m_temperature", # air temperature
+  DataSet = "reanalysis-era5-land", # data product from which we want to download
+  
+  ## Time-Window
+  DateStart = min_date, # date at which time window opens
+  DateStop = max_date, # date at which time window terminates
+  TZone = "Etc/GMT-3", # Brasilia Time
+  
+  ## Temporal Aggregation
+  TResolution = "day", # we want daily aggregates
+  TStep = 1, # we want aggregates of 1 day each
+  
+  ## Spatial Limiting
+  Extent = spat_extent_buffered, # bounding box created above
+  
+  ## File Storing
+  Dir = "data/interim", # where to store the data
+  FileName = "temp", # what to call the resulting file
+  
+  ## API User Credentials
+  API_User = API_User,
+  API_Key = API_Key
+)
+```
+
+```{r}
+# download dewpoint temp
+
+# If you want to rerun this code to download data for different dates or areas, you will need to change the filename below
+
+era5_dew <- CDownloadS(
+  
+  ## Variable and Data Product
+  Variable = "2m_dewpoint_temperature", # dewpoint temperature
+  DataSet = "reanalysis-era5-land", # data product from which we want to download
+  
+  ## Time-Window
+  DateStart = min_date, # date at which time window opens
+  DateStop = max_date, # date at which time window terminates
+  TZone = "Etc/GMT-3", # Brasilia Time
+  
+  ## Temporal Aggregation
+  TResolution = "day", # we want daily aggregates
+  TStep = 1, # we want aggregates of 1 day each
+  
+  ## Spatial Limiting
+  Extent = spat_extent_buffered, # bounding box created above
+  
+  ## File Storing
+  Dir = "data/interim", # where to store the data
+  FileName = "dewpoint_temp", # what to call the resulting file
+  
+  ## API User Credentials
+  API_User = API_User,
+  API_Key = API_Key
+)
+```
+
+```{r}
+# extract raster values for each unique location
+temp_df <- extract(era5_temp, locs) |> 
+  tidyr::pivot_longer(cols = -1, names_to = "varname", values_to = "temp_k") |> 
+  dplyr::mutate(day = as.numeric(str_split_i(string = varname, pattern = "_", i = 3)),
+                temp_c = temp_k - 273.15) |> 
+  left_join(date_key, by = "day") |> 
+  dplyr::select(ID, date, temp_k, temp_c)
+
+dew_df <- extract(era5_dew, locs) |> 
+  tidyr::pivot_longer(cols = -1, names_to = "varname", values_to = "dewp_k") |> 
+  dplyr::mutate(day = as.numeric(str_split_i(string = varname, pattern = "_", i = 4)),
+                dewp_c = dewp_k - 273.15) |> 
+  left_join(date_key, by = "day") |> 
+  dplyr::select(ID, date, dewp_k, dewp_c)
+
+clim_data <- temp_df |> 
+  dplyr::left_join(dew_df, by = c("ID", "date")) |> 
+  
+  dplyr::mutate(
+    # calculate relative humidity based on formula above
+    rh = 100 * exp((17.625 * dewp_c)/(243.04 + dewp_c)) / exp((17.625 * temp_c)/(243.04 + temp_c)),
+    # temperature 15 days before
+    temp_15d_before = lag(temp_c, 15),
+    # relative humidity 15 days before
+    u_r_a_15d_before = lag(rh, 15),
+    # mean temperature in previous 30 days
+    temp_mean_month_before = slide_dbl(temp_c, mean, .before = 29, .complete = TRUE),
+    # max temperature in previous 30 days
+    temp_max_month_before = slide_dbl(temp_c, max, .before = 29, .complete = TRUE),
+    # min temperature in previous 30 days
+    temp_min_month_before = slide_dbl(temp_c, min, .before = 29, .complete = TRUE),
+    # mean relative humidity in previous 30 days
+    u_r_a_mean_month_before = slide_dbl(rh, mean, .before = 29, .complete = TRUE),
+    # max relative humidity in previous 30 days
+    u_r_a_max_month_before = slide_dbl(rh, max, .before = 29, .complete = TRUE),
+    # min relative humidity in previous 30 days
+    u_r_a_min_month_before = slide_dbl(rh, min, .before = 29, .complete = TRUE))
+```
+
+## Clean data and join to climate data
+
+```{r}
+# clean
+data <- locs_ids |> 
+  dplyr::mutate(
+    # format dates
+    date = if_else(str_length(date) == 8, 
+                        as.Date(date, format = "%d_%m_%y"), 
+                        as.Date(date, format = "%d_%m_%Y")),
+    # format species
+    specie = str_replace_all(specie, "_", " "),
+    specie = str_to_sentence(specie),
+    specie = str_replace_all(specie, "(?<=[A-Za-z])\\(", " ("),
+    specie = str_replace_all(specie, "\\)(?=\\S)", ") "),
+    specie = case_when(specie == "Aedes scapulariss" ~ "Aedes scapularis",
+                       specie %in% c("Culex species", "Culex spp") ~ "Culex sp",
+                       specie %in% c("Psorophora albigenu (blue)", 
+                                     "Psorophora albigenu (violet)") ~ "Psorophora albigenu"))
+
+# join
+data_full <- data |> 
+  dplyr::left_join(clim_data, by = c("ID", "date")) |> 
+  dplyr::mutate(temperature = temp_c,
+                u_r_a = rh) |> 
+  dplyr::select(-ID, -temp_c, -temp_k, -dewp_k, -dewp_c, -rh)
+
+# write_rds(data_full, "data/processed/data_with_climate.rds")
+```

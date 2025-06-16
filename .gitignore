@@ -1,0 +1,8 @@
+/.Rproj.user
+data/temp.nc
+data/south_2025_expanded_15May2025.xlsx
+data/processed/data_with_climate.rds
+data/dewpoint_temp.nc
+data/interim/dewpoint_temp.nc
+data/interim/temp.nc
+data/raw/south_2025_expanded_15May2025.xlsx
