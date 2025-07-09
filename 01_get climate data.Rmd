@@ -105,6 +105,12 @@ spat_extent_buffered <- ext(xmin(spat_extent) - 0.05,
                             ymin(spat_extent) - 0.05,
                             ymax(spat_extent) + 0.05)
 ```
+### Check which variables are available in ERA5-Land
+```{r}
+vars <- Meta.Variables(dataset = "reanalysis-era5-land")
+
+knitr::kable(vars)
+```
 
 ```{r}
 # download temperature
@@ -229,7 +235,8 @@ data <- locs_ids |>
     specie = case_when(specie == "Aedes scapulariss" ~ "Aedes scapularis",
                        specie %in% c("Culex species", "Culex spp") ~ "Culex sp",
                        specie %in% c("Psorophora albigenu (blue)", 
-                                     "Psorophora albigenu (violet)") ~ "Psorophora albigenu"))
+                                     "Psorophora albigenu (violet)") ~ "Psorophora albigenu",
+                       .default = specie))
 
 # join
 data_full <- data |> 
