@@ -246,4 +246,5 @@ data_full <- data |>
   dplyr::select(-ID, -temp_c, -temp_k, -dewp_k, -dewp_c, -rh)
 
 # write_rds(data_full, "data/processed/data_with_climate.rds")
+# write_csv(data_full, "data/processed/data_with_climate.csv")
 ```
