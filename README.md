@@ -19,7 +19,7 @@ This repository contains code and documentation for downloading and processing t
 
 To download data from the CDS, you must:
 
-- [Register an account](https://cds.climate.copernicus.eu/user/register)
+- [Register an account](https://www.ecmwf.int/)
 - Accept the terms of use
 - Follow the [CDS API setup instructions](https://cds.climate.copernicus.eu/api-how-to)
 
