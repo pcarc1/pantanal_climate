@@ -38,7 +38,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 if (!require("pacman")) install.packages("pacman")
 if(!require("devtools")) install.packages("devtools")
-if(!require("automap")) install.packages("automap")
+if(!require("automap")) install.packages('automap', repos = c('https://jskoien.r-universe.dev', 'https://cloud.r-project.org'))
 if(!require("KrigR")) devtools::install_github("https://github.com/ErikKusch/KrigR")
 
 pacman::p_load(tidyverse, sf, KrigR, terra, slider)
